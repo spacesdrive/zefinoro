@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "zefinoro",
+  "main": "./src/index.ts",
+  "compatibility_date": "2025-08-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  },
+  // The Worker serves the built SPA *and* the API from a single origin, so the
+  // browser never makes a cross-origin request and no CORS preflight is needed.
+  // `run_worker_first` keeps /api/* from being swallowed by the asset handler.
+  "assets": {
+    "directory": "../frontend/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "vars": {
+    "ENVIRONMENT": "production",
+    "APP_URL": "https://zefinoro.spacesdrive.cc"
+  },
+  "routes": [
+    {
+      "pattern": "zefinoro.spacesdrive.cc",
+      "custom_domain": true
+    }
+  ]
+}
