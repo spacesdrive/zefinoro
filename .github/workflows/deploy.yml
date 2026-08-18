@@ -1,0 +1,147 @@
+name: Deploy
+
+# Deploys to Cloudflare only when something that affects the running app
+# changes. Edits to the README or migrations alone will not trigger a release.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+# Never let two deploys race; queue them instead of cancelling, so a release
+# that has already started is allowed to finish.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify before release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend
+        working-directory: backend
+        run: npm ci
+
+      - name: Backend typecheck
+        working-directory: backend
+        run: npx tsc --noEmit
+
+      - name: Backend tests
+        working-directory: backend
+        run: npx vitest run
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend typecheck
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Frontend tests
+        working-directory: frontend
+        run: npx vitest run
+
+  deploy:
+    name: Build and deploy to Cloudflare
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci
+
+      # Vite inlines VITE_* at build time, so these must be present here rather
+      # than as Worker secrets.
+      - name: Build SPA
+        working-directory: frontend
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$VITE_SUPABASE_URL" ] || [ -z "$VITE_SUPABASE_ANON_KEY" ]; then
+            echo "::error::VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY must be set as repository secrets."
+            exit 1
+          fi
+          npm run build
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend
+        working-directory: backend
+        run: npm ci
+
+      # Uses the wrangler already installed by `npm ci`, rather than
+      # cloudflare/wrangler-action, which installs its own copy and collides
+      # with this project's pinned @cloudflare/workers-types.
+      #
+      # Server-side secrets are NOT set here. They are managed once with
+      # `wrangler secret bulk` and persist across deployments; passing them
+      # through CI would put them in more places than necessary.
+      - name: Deploy Worker
+        working-directory: backend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID must be set as repository secrets."
+            exit 1
+          fi
+          npx wrangler deploy
+
+      - name: Smoke test the deployment
+        run: |
+          set -euo pipefail
+          base="https://zefinoro.spacesdrive.cc"
+          sleep 5
+
+          check() {
+            local path="$1" expected="$2" label="$3"
+            local code
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$base$path")
+            if [ "$code" != "$expected" ]; then
+              echo "::error::$label returned $code, expected $expected"
+              return 1
+            fi
+            echo "  ok  $label ($code)"
+          }
+
+          # The API answers, protected routes still reject anonymous callers,
+          # and the SPA shell is served.
+          check "/api/health"     200 "health"
+          check "/api/workspaces" 401 "auth guard"
+          check "/api/nope"       404 "api 404"
+          check "/"               200 "SPA"
+          echo "Deployment verified."
