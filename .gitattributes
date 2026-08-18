@@ -1,0 +1,12 @@
+# Normalise line endings so Windows checkouts do not show every file as
+# modified, and keep shell scripts and YAML LF-only wherever they are checked
+# out - GitHub Actions runners execute them on Linux.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary

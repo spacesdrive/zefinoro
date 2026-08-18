@@ -1,0 +1,16 @@
+{
+  "name": "zefinoro",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Multi-workspace financial dashboard -- Hono on Cloudflare Workers + React SPA + Supabase",
+  "scripts": {
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "dev:api": "npm --prefix backend run dev",
+    "dev:web": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "typecheck": "npm --prefix backend run typecheck && npm --prefix frontend run typecheck",
+    "test": "npm --prefix backend test && npm --prefix frontend test",
+    "deploy": "npm run build && npm --prefix backend run deploy",
+    "db:push": "supabase db push"
+  }
+}
